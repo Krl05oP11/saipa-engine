@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     telegram_webhook_url: str = ""
     # Telegram chat id used to deliver EVAL-IA demo feedback (optional).
-    evalia_demo_telegram_id: str = ""
+    evalia_demo_telegram_id: int = 0
 
     # WhatsApp
     # NOTE: provider wiring is inconsistent across the codebase (Twilio here,
