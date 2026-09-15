@@ -17,6 +17,9 @@ langchain-text-splitters==0.3.4
 # Vector store (Fase 1+)
 chromadb==0.6.3
 
+# Sparse/lexical retrieval, fused with the dense (embedding) search — RAG hybrid search
+rank_bm25==0.2.2
+
 # Embeddings
 sentence-transformers==3.3.1
 
