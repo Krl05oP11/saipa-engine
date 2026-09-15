@@ -1,14 +1,15 @@
 """
 RAG Indexer — Fase 1 implementation.
-Splits text into chunks and indexes them into ChromaDB with Ollama embeddings.
+Splits text into chunks and indexes them into ChromaDB with
+sentence-transformers embeddings.
 """
 import logging
 
 import chromadb
-from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import get_settings
+from rag.embeddings import get_embedder
 
 log = logging.getLogger("saipa_engine.rag.indexer")
 
@@ -34,10 +35,7 @@ def index_text(content: str, source: str, course_id: int) -> dict:
         log.warning("index_text: no chunks produced for source '%s' course %d", source, course_id)
         return {"course_id": course_id, "chunk_count": 0, "status": "empty"}
 
-    embeddings = OllamaEmbeddings(
-        model=settings.ollama_embed_model,
-        base_url=settings.ollama_base_url,
-    )
+    embeddings = get_embedder()
 
     collection_name = f"course_{course_id}"
     client = chromadb.PersistentClient(path=settings.chroma_persist_dir)

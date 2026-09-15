@@ -22,11 +22,30 @@ class Settings(BaseSettings):
     # reverse proxy). Empty = send the host from moodle_url.
     moodle_public_host: str = ""
 
+    # LLM provider — "ollama" or "anthropic". Empty is refused at startup
+    # unless saipa_dev_mode is on (see main.py), same fail-closed pattern
+    # as saipa_api_token: real deployments must choose explicitly, this
+    # is the university admin's call, not a default we impose.
+    llm_provider: str = ""
+
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:14b"
-    ollama_embed_model: str = "nomic-embed-text"
     ollama_timeout: int = 60
+
+    # Anthropic — recommended models only (the admin can override):
+    # Haiku for SAIPA chat/RAG/alerts, Sonnet+ for EVAL-IA grading (a
+    # weak model gives defensible-looking wrong scores on free-text
+    # answers). See local_evalia/README.md "AI Model".
+    anthropic_api_key: str = ""
+    anthropic_model_chat: str = "claude-haiku-4-5-20251001"
+    anthropic_model_grading: str = "claude-sonnet-5"
+
+    # Embeddings — always sentence-transformers (CPU, no GPU/API key
+    # needed). Not provider-switchable: unlike the LLM, there's no
+    # admin decision here, it just runs. Multilingual since course
+    # content is in Spanish.
+    sentence_transformers_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
 
     # ChromaDB
     chroma_persist_dir: str = "./chroma_data"

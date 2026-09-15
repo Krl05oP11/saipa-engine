@@ -9,6 +9,7 @@ Run with:
 Or in production:
     uvicorn main:app --host 0.0.0.0 --port 8052 --workers 4
 """
+import asyncio
 import logging
 import sys
 
@@ -53,6 +54,23 @@ if not settings.saipa_api_token and not settings.saipa_dev_mode:
 if settings.saipa_dev_mode and not settings.saipa_api_token:
     log.warning("SAIPA_DEV_MODE is on and no API token is set — Bearer auth is DISABLED.")
 
+# === LLM provider check at startup ===
+# Real deployments must choose explicitly (the university admin's call,
+# not ours) -- same fail-closed pattern as SAIPA_API_TOKEN above.
+if not settings.llm_provider:
+    if settings.saipa_dev_mode:
+        settings.llm_provider = "ollama"
+        log.warning("LLM_PROVIDER not set — SAIPA_DEV_MODE is on, defaulting to 'ollama' for local dev.")
+    else:
+        log.critical(
+            "LLM_PROVIDER is not set. Set it to 'ollama' or 'anthropic' "
+            "(e.g. in saipa-engine.env), or set SAIPA_DEV_MODE=true for local development only."
+        )
+        sys.exit(1)
+elif settings.llm_provider not in ("ollama", "anthropic"):
+    log.critical("LLM_PROVIDER must be 'ollama' or 'anthropic', got %r", settings.llm_provider)
+    sys.exit(1)
+
 # === FastAPI app ===
 app = FastAPI(
     title="SAIPA Engine",
@@ -86,8 +104,18 @@ app.include_router(telegram_router)   # /telegram/webhook, /telegram/notify, /te
 @app.on_event("startup")
 async def on_startup() -> None:
     log.info("saipa-engine v0.1.0 started on port 8052")
-    log.info("Ollama model: %s at %s", settings.ollama_model, settings.ollama_base_url)
+    log.info("LLM provider: %s", settings.llm_provider)
+    if settings.llm_provider == "ollama":
+        log.info("Ollama model: %s at %s", settings.ollama_model, settings.ollama_base_url)
     log.info("ChromaDB persist dir: %s", settings.chroma_persist_dir)
+
+    # Warm up the embeddings model now -- it downloads from HuggingFace
+    # Hub on first construction (hundreds of MB), which must not happen
+    # inside a real request's timeout budget.
+    from rag.embeddings import get_embedder
+    log.info("Warming up embeddings model (%s)...", settings.sentence_transformers_model)
+    await asyncio.to_thread(lambda: get_embedder().embed_query("warmup"))
+    log.info("Embeddings model ready.")
 
 
 if __name__ == "__main__":

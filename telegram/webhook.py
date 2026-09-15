@@ -20,10 +20,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from config import get_settings
+from llm.factory import get_chat_model
 from rag.retriever import retrieve
 from telegram.client import get_telegram_client
 from telegram.moodle import confirm_link, get_session, mark_alert_responded, unlink_by_telegram_id
@@ -251,8 +251,7 @@ async def _handle_unlink(chat_id: int) -> None:
 # ── Two-way chat handler ──────────────────────────────────────────────────────
 
 async def _handle_message(chat_id: int, text: str) -> None:
-    client   = get_telegram_client()
-    settings = get_settings()
+    client = get_telegram_client()
 
     # Resolve Moodle user + course from Telegram chat_id
     try:
@@ -299,12 +298,7 @@ async def _handle_message(chat_id: int, text: str) -> None:
     messages.append(HumanMessage(content=text))
 
     # LLM call
-    llm = ChatOllama(
-        model=settings.ollama_model,
-        base_url=settings.ollama_base_url,
-        temperature=0.3,
-        request_timeout=float(settings.ollama_timeout),
-    )
+    llm = get_chat_model(temperature=0.3, model_purpose="chat")
     try:
         response = await llm.ainvoke(messages)
         reply = response.content if hasattr(response, "content") else str(response)

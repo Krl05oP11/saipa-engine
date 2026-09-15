@@ -1,16 +1,17 @@
 """
-Chat router — Fase 1: RAG pipeline with LangChain + ChromaDB + Ollama.
+Chat router — Fase 1: RAG pipeline with LangChain + ChromaDB + the
+configured LLM provider (see llm/factory.py).
 Supports conversation history via `history` field in the request.
 Advisor endpoint supports tool-use (LangChain function calling) since v0.5.1.
 """
 import logging
 
 from fastapi import APIRouter, Depends
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
-from config import get_settings
+from llm.factory import get_chat_model
 from rag.retriever import retrieve
 from routers.health import _verify_token
 from tools.advisor_tools import (
@@ -75,10 +76,8 @@ async def chat(
 ) -> ChatResponse:
     """
     Receives a student message and returns the assistant's reply.
-    Uses RAG: ChromaDB retrieval + Ollama LLM + conversation history.
+    Uses RAG: ChromaDB retrieval + the configured LLM + conversation history.
     """
-    settings = get_settings()
-
     # 1. Retrieve relevant chunks from ChromaDB
     docs = retrieve(req.message, req.course_id, top_k=5)
     sources = list({d["source"] for d in docs})
@@ -101,13 +100,8 @@ async def chat(
 
     messages.append(HumanMessage(content=req.message))
 
-    # 3. Call Ollama
-    llm = ChatOllama(
-        model=settings.ollama_model,
-        base_url=settings.ollama_base_url,
-        temperature=0.3,
-        request_timeout=float(settings.ollama_timeout),
-    )
+    # 3. Call the configured LLM provider
+    llm = get_chat_model(temperature=0.3, model_purpose="chat")
 
     response = await llm.ainvoke(messages)
 
@@ -224,8 +218,6 @@ async def advisor_chat(
     tools to query real data (risk scores, course material, etc.).
     Falls back to plain chat when tools are unavailable or for evalia_teacher context.
     """
-    settings = get_settings()
-
     system_prompt = (
         SYSTEM_PROMPT_EVALIA_TEACHER
         if req.context == "evalia_teacher"
@@ -239,12 +231,7 @@ async def advisor_chat(
             messages.append(AIMessage(content=h.content))
     messages.append(HumanMessage(content=req.message))
 
-    llm = ChatOllama(
-        model=settings.ollama_model,
-        base_url=settings.ollama_base_url,
-        temperature=0.4,
-        request_timeout=float(settings.ollama_timeout),
-    )
+    llm = get_chat_model(temperature=0.4, model_purpose="chat")
 
     use_tools = req.context == "advisor" and req.course_id is not None
     sources: list[str] = []
@@ -263,7 +250,7 @@ async def advisor_chat(
 
 
 async def _advisor_agent_loop(
-    llm: ChatOllama,
+    llm: BaseChatModel,
     messages: list,
     course_id: int,
 ) -> str:

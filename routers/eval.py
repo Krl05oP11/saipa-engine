@@ -2,73 +2,27 @@
 EVAL-IA evaluation router.
 
 Endpoints:
-  POST /eval/rubric/generate    — RAG → Ollama → structured rubric (topics + weights)
-  POST /eval/questions/generate — RAG by topic → Ollama few-shot → question bank entries
+  POST /eval/rubric/generate    — RAG → LLM → structured rubric (topics + weights)
+  POST /eval/questions/generate — RAG by topic → LLM few-shot → question bank entries
   POST /eval/exam/sample        — pure Python sampling (no LLM, anti-copying)
 """
 import asyncio
-import json
 import logging
 import random
-import re
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from config import get_settings
+from llm.factory import get_chat_model, get_structured_llm, invoke_structured, invoke_structured_sync
 from rag.retriever import retrieve
 from routers.health import _verify_token
 from telegram.client import get_telegram_client
 
 log = logging.getLogger("saipa_engine.routers.eval")
 router = APIRouter(prefix="/eval", tags=["eval"])
-
-
-# ─── Shared helpers ──────────────────────────────────────────────────────────
-
-def _get_llm(temperature: float = 0.2) -> ChatOllama:
-    settings = get_settings()
-    return ChatOllama(
-        model=settings.ollama_model,
-        base_url=settings.ollama_base_url,
-        temperature=temperature,
-        request_timeout=float(settings.ollama_timeout),
-        format="json",          # forces JSON-mode output
-    )
-
-
-def _extract_json(text: str) -> dict | list:
-    """
-    Extracts the first valid JSON object or array from LLM output.
-    Handles models that wrap JSON in markdown code fences.
-    """
-    # Strip markdown fences if present
-    text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
-    # Try to parse directly
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # Find the first {...} or [...] block
-    for start_char, end_char in [('{', '}'), ('[', ']')]:
-        start = text.find(start_char)
-        if start == -1:
-            continue
-        depth = 0
-        for i, ch in enumerate(text[start:], start):
-            if ch == start_char:
-                depth += 1
-            elif ch == end_char:
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start:i + 1])
-                    except json.JSONDecodeError:
-                        break
-    raise ValueError(f"No valid JSON found in LLM output: {text[:200]}")
 
 
 # ─── /eval/rubric/generate ───────────────────────────────────────────────────
@@ -118,6 +72,13 @@ class RubricItem(BaseModel):
 class RubricGenerateResponse(BaseModel):
     name: str
     description: str
+    items: list[RubricItem]
+
+
+class _FillPassItems(BaseModel):
+    """Structured-output schema for generate_rubric's fill-pass — same
+    item shape, no name/description (the fill-pass only adds items to
+    an already-generated rubric)."""
     items: list[RubricItem]
 
 
@@ -253,32 +214,27 @@ async def generate_rubric(
         f"y genera la rúbrica de evaluación exhaustiva cubriendo TODOS los subtemas:\n\n{context[:20000]}"
     )
 
-    # 3. Call Ollama — with fill-pass if LLM returns fewer items than requested
+    # 3. Call the LLM — with fill-pass if it returns fewer items than requested
     system_prompt = RUBRIC_SYSTEM.replace("{item_count}", str(item_count))
-    llm = _get_llm(temperature=0.2)
+    llm = get_structured_llm(RubricGenerateResponse, temperature=0.2, model_purpose="grading")
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_msg)]
 
     try:
-        response = await llm.ainvoke(messages)
-        raw = response.content if hasattr(response, "content") else str(response)
-        data = _extract_json(raw)
+        parsed = await invoke_structured(llm, messages)
     except Exception as exc:
         log.error("generate_rubric: LLM/parse error for course %d: %s", req.course_id, exc)
         raise
 
-    raw_items = data.get("items", [])
+    raw_items = list(parsed.items)
 
     # 4. Fill pass: if fewer items than requested, ask for the missing ones.
     # Keep the fill call small — no big context repetition, just the gap instruction.
     if len(raw_items) < item_count:
         missing = item_count - len(raw_items)
-        existing_topics = "; ".join(it.get("topic", "") for it in raw_items)
+        existing_topics = "; ".join(it.topic for it in raw_items)
         topic_label = req.scope or "el curso"
         fill_system = (
-            "Eres un experto en diseño curricular. Responde ÚNICAMENTE con un objeto JSON "
-            "con el formato {\"items\": [{\"topic\":\"...\",\"description\":\"...\","
-            "\"difficulty_weight\":\"low|medium|high\",\"sortorder\":1}]}. "
-            "No incluyas texto fuera del JSON."
+            "Eres un experto en diseño curricular. Genera los ítems de rúbrica pedidos."
         )
         fill_user = (
             f"Necesito {missing} ítems adicionales de rúbrica sobre '{topic_label}'.\n"
@@ -292,24 +248,22 @@ async def generate_rubric(
             SystemMessage(content=fill_system),
             HumanMessage(content=fill_user),
         ]
+        fill_llm = get_structured_llm(_FillPassItems, temperature=0.2, model_purpose="grading")
         try:
-            fill_response = await llm.ainvoke(fill_messages)
-            fill_raw = fill_response.content if hasattr(fill_response, "content") else str(fill_response)
-            fill_data = _extract_json(fill_raw)
-            fill_items = fill_data.get("items", [])
-            raw_items = raw_items + fill_items
+            fill_parsed = await invoke_structured(fill_llm, fill_messages)
+            raw_items = raw_items + list(fill_parsed.items)
             log.info(
                 "generate_rubric fill-pass: course=%d added=%d total=%d",
-                req.course_id, len(fill_items), len(raw_items),
+                req.course_id, len(fill_parsed.items), len(raw_items),
             )
         except Exception as exc:
             log.warning("generate_rubric: fill-pass failed (non-fatal): %s", exc)
 
     items = [
         RubricItem(
-            topic=it.get("topic", "Tema sin nombre"),
-            description=it.get("description", ""),
-            difficulty_weight=it.get("difficulty_weight", "medium"),
+            topic=it.topic,
+            description=it.description,
+            difficulty_weight=it.difficulty_weight,
             sortorder=idx + 1,
         )
         for idx, it in enumerate(raw_items)
@@ -318,8 +272,8 @@ async def generate_rubric(
     log.info("generate_rubric: course=%d requested=%d final=%d", req.course_id, item_count, len(items))
 
     return RubricGenerateResponse(
-        name=data.get("name", f"Rúbrica del curso {req.course_id}"),
-        description=data.get("description", ""),
+        name=parsed.name,
+        description=parsed.description,
         items=items,
     )
 
@@ -424,45 +378,21 @@ async def generate_questions(
             "razonables sobre el tema indicado, de nivel universitario."
         )
 
-    # 3. Call Ollama (low temperature for structured output)
-    llm = _get_llm(temperature=0.1)
+    # 3. Call the LLM (low temperature for structured output)
+    llm = get_structured_llm(QuestionGenerateResponse, temperature=0.1, model_purpose="grading")
     messages = [SystemMessage(content=QUESTIONS_SYSTEM), HumanMessage(content=user_msg)]
 
     try:
-        response = await llm.ainvoke(messages)
-        raw = response.content if hasattr(response, "content") else str(response)
-        data = _extract_json(raw)
+        parsed = await invoke_structured(llm, messages)
     except Exception as exc:
         log.error("generate_questions: LLM/parse error course=%d topic='%s': %s",
                   req.course_id, req.topic, exc)
         raise
 
-    raw_questions = data.get("questions", [])
-
-    questions = []
-    for q in raw_questions:
-        options = [
-            QuestionOption(
-                text=opt.get("text", ""),
-                correct=bool(opt.get("correct", False)),
-                feedback=opt.get("feedback", ""),
-            )
-            for opt in q.get("options", [])
-        ]
-        questions.append(GeneratedQuestion(
-            stem=q.get("stem", ""),
-            type=q.get("type", req.question_types[0]),
-            difficulty=q.get("difficulty", req.difficulty),
-            topic=q.get("topic", req.topic),
-            correct_answer=str(q.get("correct_answer", "")),
-            tolerance=float(q.get("tolerance", 0)),
-            options=options,
-        ))
-
     log.info("generate_questions: course=%d topic='%s' difficulty=%s generated=%d",
-             req.course_id, req.topic, req.difficulty, len(questions))
+             req.course_id, req.topic, req.difficulty, len(parsed.questions))
 
-    return QuestionGenerateResponse(questions=questions)
+    return parsed
 
 
 # ─── /eval/exam/sample ───────────────────────────────────────────────────────
@@ -634,6 +564,11 @@ class ExamGradeResponse(BaseModel):
     details: list[GradeDetail]
 
 
+class EssayGradeResult(BaseModel):
+    score: float
+    feedback: str
+
+
 def _grade_essay_sync(
     q: GradeQuestionData,
     student_answer: str,
@@ -655,18 +590,12 @@ def _grade_essay_sync(
     if context:
         user_msg += f"Material del curso (referencia):\n{context[:4000]}"
 
-    llm = _get_llm(temperature=0.0)
+    llm = get_structured_llm(EssayGradeResult, temperature=0.0, model_purpose="grading")
     messages = [SystemMessage(content=ESSAY_GRADE_SYSTEM), HumanMessage(content=user_msg)]
 
     try:
-        response = llm.invoke(messages)
-        raw = (response.content if hasattr(response, "content") else str(response)).strip()
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            data = json.loads(m.group(0))
-            score = float(data.get("score", 0.5))
-            feedback = str(data.get("feedback", ""))
-            return max(0.0, min(1.0, score)), feedback
+        result = invoke_structured_sync(llm, messages)
+        return max(0.0, min(1.0, result.score)), result.feedback
     except Exception as exc:
         log.error("essay grading failed for question %d: %s", q.id, exc)
 
@@ -945,13 +874,7 @@ async def _generate_and_send_feedback(req: FeedbackSendRequest) -> None:
 
         # ── LLM call (plain text, not JSON) ──────────────────────────────────
         system_prompt = req.feedback_prompt.strip() if req.feedback_prompt.strip() else FEEDBACK_SYSTEM
-        settings = get_settings()
-        llm = ChatOllama(
-            model=settings.ollama_model,
-            base_url=settings.ollama_base_url,
-            temperature=0.4,
-            request_timeout=float(settings.ollama_timeout),
-        )
+        llm = get_chat_model(temperature=0.4, model_purpose="grading")
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_msg)]
         response = await llm.ainvoke(messages)
         text = response.content if hasattr(response, "content") else str(response)

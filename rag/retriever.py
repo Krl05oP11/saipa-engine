@@ -1,15 +1,15 @@
 """
-RAG Retriever — hybrid search: dense (OllamaEmbeddings + ChromaDB cosine)
-fused with BM25 (lexical) via Reciprocal Rank Fusion.
+RAG Retriever — hybrid search: dense (sentence-transformers + ChromaDB
+cosine) fused with BM25 (lexical) via Reciprocal Rank Fusion.
 """
 import logging
 import re
 
 import chromadb
-from langchain_ollama import OllamaEmbeddings
 from rank_bm25 import BM25Okapi
 
 from config import get_settings
+from rag.embeddings import get_embedder
 
 log = logging.getLogger("saipa_engine.rag.retriever")
 
@@ -94,10 +94,7 @@ def retrieve(
     dense_ids: list[str] = []
     dense_docs: dict[str, dict] = {}
     try:
-        embeddings = OllamaEmbeddings(
-            model=settings.ollama_embed_model,
-            base_url=settings.ollama_base_url,
-        )
+        embeddings = get_embedder()
         query_embedding = embeddings.embed_query(query)
         results = collection.query(
             query_embeddings=[query_embedding],
