@@ -17,6 +17,10 @@ langchain-text-splitters==0.3.4
 # Vector store (Fase 1+)
 chromadb==0.6.3
 
+# PDF text extraction (E3: /index-pdf-bytes, and /index-pptx-bytes via
+# LibreOffice-converted PDF)
+pypdf==5.1.0
+
 # Sparse/lexical retrieval, fused with the dense (embedding) search — RAG hybrid search
 rank_bm25==0.2.2
 
