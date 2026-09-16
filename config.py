@@ -58,14 +58,12 @@ class Settings(BaseSettings):
     # Telegram chat id used to deliver EVAL-IA demo feedback (optional).
     evalia_demo_telegram_id: int = 0
 
-    # WhatsApp
-    # NOTE: provider wiring is inconsistent across the codebase (Twilio here,
-    # Evolution API in whatsapp/client.py, AWS in the installer). Pick one in E9.
-    whatsapp_provider: str = "twilio"
-    twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
-    twilio_from: str = "whatsapp:+14155238886"
-    # Evolution API (used by whatsapp/client.py)
+    # WhatsApp (E9, 2026-09-16): whatsapp/client.py (Evolution API) is the
+    # only real implementation -- Twilio config and the sender.py/webhook.py
+    # stubs were dead (zero callers, zero real code) and removed. The
+    # channel still isn't mounted as a router in main.py, so client.py has
+    # no callers either right now -- kept as the reference implementation
+    # for whenever the channel is actually wired up, deliberately not now.
     evolution_api_url: str = ""
     evolution_api_key: str = ""
     evolution_instance_name: str = "saipa"
