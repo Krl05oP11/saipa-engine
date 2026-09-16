@@ -15,6 +15,7 @@ Never guess which method a new provider needs -- verify with a real
 call before adding it here.
 """
 import logging
+from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -25,13 +26,26 @@ from config import get_settings
 
 log = logging.getLogger("saipa_engine.llm.factory")
 
+# Single source of truth for valid providers -- main.py's startup check
+# imports this same dict's keys rather than duplicating the set, so
+# adding a provider here can't silently drift out of sync with what
+# main.py accepts.
 _STRUCTURED_OUTPUT_METHOD = {
     "ollama": "json_schema",
     "anthropic": "function_calling",
 }
 
+# Anthropic's SDK default is 1024 -- too low for a full rubric (up to 40
+# structured items) or a ~600-word feedback message (FEEDBACK_SYSTEM's
+# own instruction gets close to 1024 tokens by itself). Ollama has no
+# equivalent low default (num_predict defers to the server). Verified
+# empirically, not assumed from docs.
+_ANTHROPIC_MAX_TOKENS = 8192
 
-def get_chat_model(*, temperature: float, model_purpose: str = "chat") -> BaseChatModel:
+ModelPurpose = Literal["chat", "grading"]
+
+
+def get_chat_model(*, temperature: float, model_purpose: ModelPurpose = "chat") -> BaseChatModel:
     """
     model_purpose: "chat" (default) or "grading". Only affects which
     Anthropic model is used (Haiku for chat/RAG/alerts, Sonnet+ for
@@ -40,13 +54,34 @@ def get_chat_model(*, temperature: float, model_purpose: str = "chat") -> BaseCh
     """
     settings = get_settings()
 
+    if settings.llm_provider not in _STRUCTURED_OUTPUT_METHOD:
+        raise RuntimeError(
+            f"Unknown llm_provider {settings.llm_provider!r} -- this should be unreachable, "
+            "main.py's startup check is supposed to guarantee a valid value."
+        )
+
     if settings.llm_provider == "anthropic":
         model = (
             settings.anthropic_model_grading
             if model_purpose == "grading"
             else settings.anthropic_model_chat
         )
-        return ChatAnthropic(model=model, api_key=settings.anthropic_api_key, temperature=temperature)
+        # `temperature` is deliberately NOT passed here. Verified empirically:
+        # the recommended grading model (claude-sonnet-5, Claude 5 family)
+        # rejects any explicit temperature != 1 outright ("`temperature` is
+        # deprecated for this model", HTTP 400) -- every grading call would
+        # fail on the very first request with the recommended default.
+        # Older models (e.g. claude-haiku-4-5-20251001) accept a custom
+        # temperature fine, but there's no reliable way to tell from the
+        # model string alone which regime a given model ID falls into, so
+        # `temperature` (still used for Ollama below) is not forwarded to
+        # Anthropic at all -- letting the API use its own default/required
+        # behavior is the one choice that works for both regimes.
+        return ChatAnthropic(
+            model=model,
+            api_key=settings.anthropic_api_key,
+            max_tokens=_ANTHROPIC_MAX_TOKENS,
+        )
 
     return ChatOllama(
         model=settings.ollama_model,
@@ -56,7 +91,7 @@ def get_chat_model(*, temperature: float, model_purpose: str = "chat") -> BaseCh
     )
 
 
-def get_structured_llm(schema: type[BaseModel], *, temperature: float, model_purpose: str = "chat"):
+def get_structured_llm(schema: type[BaseModel], *, temperature: float, model_purpose: ModelPurpose = "chat"):
     """
     Returns a Runnable bound to structured output for `schema`, using
     the provider-appropriate method. Caller awaits invoke_structured()
@@ -64,10 +99,9 @@ def get_structured_llm(schema: type[BaseModel], *, temperature: float, model_pur
     failure instead of a silent None on a parse miss.
     """
     settings = get_settings()
+    chat_model = get_chat_model(temperature=temperature, model_purpose=model_purpose)  # validates llm_provider
     method = _STRUCTURED_OUTPUT_METHOD[settings.llm_provider]
-    return get_chat_model(temperature=temperature, model_purpose=model_purpose).with_structured_output(
-        schema, method=method, include_raw=True
-    )
+    return chat_model.with_structured_output(schema, method=method, include_raw=True)
 
 
 async def invoke_structured(llm, messages) -> BaseModel:

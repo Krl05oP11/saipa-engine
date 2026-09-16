@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from license_validator import validate_license
+from llm.factory import _STRUCTURED_OUTPUT_METHOD
 from routers.health import router as health_router
 from routers.chat import router as chat_router
 from routers.index import router as index_router
@@ -57,19 +58,35 @@ if settings.saipa_dev_mode and not settings.saipa_api_token:
 # === LLM provider check at startup ===
 # Real deployments must choose explicitly (the university admin's call,
 # not ours) -- same fail-closed pattern as SAIPA_API_TOKEN above.
+_VALID_LLM_PROVIDERS = tuple(_STRUCTURED_OUTPUT_METHOD.keys())  # single source of truth: llm/factory.py
+
 if not settings.llm_provider:
     if settings.saipa_dev_mode:
         settings.llm_provider = "ollama"
         log.warning("LLM_PROVIDER not set — SAIPA_DEV_MODE is on, defaulting to 'ollama' for local dev.")
     else:
         log.critical(
-            "LLM_PROVIDER is not set. Set it to 'ollama' or 'anthropic' "
-            "(e.g. in saipa-engine.env), or set SAIPA_DEV_MODE=true for local development only."
+            "LLM_PROVIDER is not set. Set it to one of %s "
+            "(e.g. in saipa-engine.env), or set SAIPA_DEV_MODE=true for local development only.",
+            _VALID_LLM_PROVIDERS,
         )
         sys.exit(1)
-elif settings.llm_provider not in ("ollama", "anthropic"):
-    log.critical("LLM_PROVIDER must be 'ollama' or 'anthropic', got %r", settings.llm_provider)
+elif settings.llm_provider not in _VALID_LLM_PROVIDERS:
+    log.critical("LLM_PROVIDER must be one of %s, got %r", _VALID_LLM_PROVIDERS, settings.llm_provider)
     sys.exit(1)
+
+# An empty ANTHROPIC_API_KEY with LLM_PROVIDER=anthropic would otherwise
+# start fine and only fail per-request with an opaque auth error from the
+# Anthropic SDK -- same fail-closed treatment as SAIPA_API_TOKEN above.
+if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
+    if settings.saipa_dev_mode:
+        log.warning("SAIPA_DEV_MODE is on and ANTHROPIC_API_KEY is not set — every LLM call will fail.")
+    else:
+        log.critical(
+            "LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set. "
+            "Set it, or set SAIPA_DEV_MODE=true for local development only."
+        )
+        sys.exit(1)
 
 # === FastAPI app ===
 app = FastAPI(
@@ -111,10 +128,20 @@ async def on_startup() -> None:
 
     # Warm up the embeddings model now -- it downloads from HuggingFace
     # Hub on first construction (hundreds of MB), which must not happen
-    # inside a real request's timeout budget.
+    # inside a real request's timeout budget. Fails closed with a clear
+    # message (e.g. a firewalled/offline install can't reach HF Hub)
+    # instead of a raw stack trace from an uncaught startup exception.
     from rag.embeddings import get_embedder
     log.info("Warming up embeddings model (%s)...", settings.sentence_transformers_model)
-    await asyncio.to_thread(lambda: get_embedder().embed_query("warmup"))
+    try:
+        await asyncio.to_thread(lambda: get_embedder().embed_query("warmup"))
+    except Exception as exc:
+        log.critical(
+            "Failed to load the embeddings model (%s): %s. Check network access to "
+            "HuggingFace Hub, or that SENTENCE_TRANSFORMERS_MODEL is a valid model name.",
+            settings.sentence_transformers_model, exc,
+        )
+        sys.exit(1)
     log.info("Embeddings model ready.")
 
 
