@@ -88,6 +88,28 @@ if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
         )
         sys.exit(1)
 
+# An empty OPENAI_COMPATIBLE_BASE_URL (or no model set) with
+# LLM_PROVIDER=openai_compatible would otherwise start fine and only fail
+# per-request -- same fail-closed treatment as the Anthropic check above.
+# api_key is deliberately NOT required here: many self-hosted servers
+# (vLLM, LM Studio) don't check it at all.
+if settings.llm_provider == "openai_compatible" and (
+    not settings.openai_compatible_base_url or not settings.openai_compatible_model_chat
+):
+    if settings.saipa_dev_mode:
+        log.warning(
+            "SAIPA_DEV_MODE is on and OPENAI_COMPATIBLE_BASE_URL/MODEL_CHAT "
+            "are not fully set — every LLM call will fail."
+        )
+    else:
+        log.critical(
+            "LLM_PROVIDER=openai_compatible but OPENAI_COMPATIBLE_BASE_URL and/or "
+            "OPENAI_COMPATIBLE_MODEL_CHAT are not set. Set both (OPENAI_COMPATIBLE_MODEL_GRADING "
+            "is optional and falls back to the chat model), or set SAIPA_DEV_MODE=true for "
+            "local development only."
+        )
+        sys.exit(1)
+
 # === Telegram webhook secret check at startup ===
 # An empty telegram_webhook_secret with the bot enabled makes /telegram/webhook
 # accept updates from anyone who finds the URL, not just Telegram's servers --
@@ -154,6 +176,11 @@ async def on_startup() -> None:
     log.info("LLM provider: %s", settings.llm_provider)
     if settings.llm_provider == "ollama":
         log.info("Ollama model: %s at %s", settings.ollama_model, settings.ollama_base_url)
+    elif settings.llm_provider == "openai_compatible":
+        log.info(
+            "OpenAI-compatible model: %s at %s",
+            settings.openai_compatible_model_chat, settings.openai_compatible_base_url,
+        )
     log.info("ChromaDB persist dir: %s", settings.chroma_persist_dir)
 
     # Warm up the embeddings model now -- it downloads from HuggingFace

@@ -22,10 +22,11 @@ class Settings(BaseSettings):
     # reverse proxy). Empty = send the host from moodle_url.
     moodle_public_host: str = ""
 
-    # LLM provider — "ollama" or "anthropic". Empty is refused at startup
-    # unless saipa_dev_mode is on (see main.py), same fail-closed pattern
-    # as saipa_api_token: real deployments must choose explicitly, this
-    # is the university admin's call, not a default we impose.
+    # LLM provider — "ollama", "anthropic" or "openai_compatible". Empty is
+    # refused at startup unless saipa_dev_mode is on (see main.py), same
+    # fail-closed pattern as saipa_api_token: real deployments must choose
+    # explicitly, this is the university admin's call, not a default we
+    # impose.
     llm_provider: str = ""
 
     # Ollama
@@ -40,6 +41,17 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model_chat: str = "claude-haiku-4-5-20251001"
     anthropic_model_grading: str = "claude-sonnet-5"
+
+    # OpenAI-compatible — one generic adapter for any backend that speaks
+    # the OpenAI chat-completions API: self-hosted (vLLM, LM Studio, TGI,
+    # Ollama's own /v1 shim) or hosted (OpenRouter, Together, etc.). No
+    # safe default for base_url -- unlike Ollama this always varies per
+    # deployment. api_key may legitimately be empty for a local server
+    # that doesn't check it.
+    openai_compatible_base_url: str = ""
+    openai_compatible_api_key: str = ""
+    openai_compatible_model_chat: str = ""
+    openai_compatible_model_grading: str = ""
 
     # Embeddings — always sentence-transformers (CPU, no GPU/API key
     # needed). Not provider-switchable: unlike the LLM, there's no

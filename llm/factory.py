@@ -1,7 +1,7 @@
 """
-LLM provider factory — settings.llm_provider ("ollama" | "anthropic")
-picks the backing chat model. Centralizes two provider-specific quirks
-found empirically (not guessed from docs):
+LLM provider factory — settings.llm_provider ("ollama" | "anthropic" |
+"openai_compatible") picks the backing chat model. Centralizes
+provider-specific quirks found empirically (not guessed from docs):
 
 - ChatOllama.with_structured_output()'s default method
   ("function_calling") silently fails against qwen2.5:14b-16k -- the
@@ -10,6 +10,15 @@ found empirically (not guessed from docs):
 - ChatAnthropic has no native format= mode; its structured output goes
   through tool-calling ("function_calling"), which is what actually
   works for Claude models.
+- ChatOpenAI (used for "openai_compatible") verified working with BOTH
+  "json_schema" and "function_calling" against a real OpenAI-compatible
+  endpoint (Ollama's own /v1 shim, http://localhost:11434/v1) -- picked
+  "json_schema" since that's the OpenAI API's own native structured-output
+  mechanism, more likely to be well-supported by other OpenAI-compatible
+  servers (vLLM, LM Studio, OpenRouter, TGI) than the tool-calling route.
+  Unlike Anthropic, temperature IS passed through for this provider --
+  verified temperature=0.0 is accepted without error (no equivalent of
+  Anthropic's claude-sonnet-5 "temperature deprecated" 400).
 
 Never guess which method a new provider needs -- verify with a real
 call before adding it here.
@@ -20,6 +29,7 @@ from typing import Literal
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from config import get_settings
@@ -33,6 +43,7 @@ log = logging.getLogger("saipa_engine.llm.factory")
 _STRUCTURED_OUTPUT_METHOD = {
     "ollama": "json_schema",
     "anthropic": "function_calling",
+    "openai_compatible": "json_schema",
 }
 
 # Anthropic's SDK default is 1024 -- too low for a full rubric (up to 40
@@ -81,6 +92,27 @@ def get_chat_model(*, temperature: float, model_purpose: ModelPurpose = "chat") 
             model=model,
             api_key=settings.anthropic_api_key,
             max_tokens=_ANTHROPIC_MAX_TOKENS,
+        )
+
+    if settings.llm_provider == "openai_compatible":
+        # Unlike Anthropic, a single self-hosted model is the common case,
+        # so an unset grading model falls back to the chat model instead
+        # of being required separately (main.py's startup check only
+        # requires the chat model to be set).
+        model = (
+            settings.openai_compatible_model_grading or settings.openai_compatible_model_chat
+            if model_purpose == "grading"
+            else settings.openai_compatible_model_chat
+        )
+        # api_key="" would make the underlying OpenAI SDK raise before any
+        # request is sent, even though many self-hosted servers (vLLM, LM
+        # Studio) don't check it at all -- a harmless placeholder satisfies
+        # the SDK without claiming a real credential exists.
+        return ChatOpenAI(
+            model=model,
+            base_url=settings.openai_compatible_base_url,
+            api_key=settings.openai_compatible_api_key or "not-required",
+            temperature=temperature,
         )
 
     return ChatOllama(

@@ -46,16 +46,23 @@ Key ones:
   refuses to start with an empty token unless `SAIPA_DEV_MODE=true` (local dev only).
 - `SAIPA_LICENSE_KEY` — license validation at startup (30-day offline grace).
 - `MOODLE_URL` / `MOODLE_TOKEN` — Moodle web-services endpoint.
-- `LLM_PROVIDER` — **required**, `ollama` or `anthropic` (this is the university
-  admin's decision — who to contract and pay for the model, not ours). The
-  engine refuses to start with it unset unless `SAIPA_DEV_MODE=true` (falls
-  back to `ollama`).
+- `LLM_PROVIDER` — **required**, `ollama`, `anthropic` or `openai_compatible`
+  (this is the university admin's decision — who to contract and pay for the
+  model, not ours). The engine refuses to start with it unset unless
+  `SAIPA_DEV_MODE=true` (falls back to `ollama`).
   - `ollama`: `OLLAMA_BASE_URL` / `OLLAMA_MODEL`. Self-hosted, no API key.
   - `anthropic`: `ANTHROPIC_API_KEY` — **required** if this provider is chosen
     (same fail-closed rule as above). `ANTHROPIC_MODEL_CHAT` /
     `ANTHROPIC_MODEL_GRADING` — recommended defaults (Haiku for SAIPA
     chat/RAG/alerts, Sonnet+ for EVAL-IA grading — a weak model gives
     defensible-looking wrong scores on free-text answers), override if needed.
+  - `openai_compatible`: one adapter for any backend that speaks the OpenAI
+    chat-completions API — self-hosted (vLLM, LM Studio, TGI, even Ollama's
+    own `/v1` shim) or hosted (OpenRouter and similar). `OPENAI_COMPATIBLE_BASE_URL`
+    (**required** if this provider is chosen — no safe default, unlike Ollama)
+    / `OPENAI_COMPATIBLE_MODEL_CHAT` (**required**) / `OPENAI_COMPATIBLE_MODEL_GRADING`
+    (optional, falls back to the chat model) / `OPENAI_COMPATIBLE_API_KEY`
+    (optional — many self-hosted servers don't check it).
 - Embeddings are always `sentence-transformers` (CPU, no GPU or extra API key —
   `SENTENCE_TRANSFORMERS_MODEL`, defaults to a small multilingual model). Not
   configurable per install like the LLM — there's no admin decision here, it
