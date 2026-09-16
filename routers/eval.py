@@ -677,74 +677,12 @@ async def grade_exam(
     )
 
 
-# ─── /eval/portfolio/aggregate ───────────────────────────────────────────────
-
-class ExamRecord(BaseModel):
-    score: float
-    max_score: float
-    timesubmitted: int              # Unix timestamp
-
-
-class PortfolioAggregateRequest(BaseModel):
-    exams: list[ExamRecord]
-
-
-class PortfolioAggregateResponse(BaseModel):
-    total_exams: int
-    avg_grade: float                # 0–100 percentage
-    best_grade: float
-    worst_grade: float
-    trend: str                      # improving|stable|declining|insufficient_data
-
-
-@router.post("/portfolio/aggregate", response_model=PortfolioAggregateResponse)
-async def aggregate_portfolio(
-    req: PortfolioAggregateRequest,
-    token: None = Depends(_verify_token),
-) -> PortfolioAggregateResponse:
-    """
-    Computes portfolio statistics from a list of graded exams.
-    Trend analysis requires ≥3 exams (sorted by timesubmitted).
-    """
-    if not req.exams:
-        return PortfolioAggregateResponse(
-            total_exams=0, avg_grade=0.0, best_grade=0.0,
-            worst_grade=0.0, trend="insufficient_data",
-        )
-
-    grades = [
-        (e.score / e.max_score * 100.0) if e.max_score > 0 else 0.0
-        for e in req.exams
-    ]
-
-    avg   = sum(grades) / len(grades)
-    best  = max(grades)
-    worst = min(grades)
-
-    trend = "insufficient_data"
-    if len(grades) >= 3:
-        sorted_pairs  = sorted(zip(req.exams, grades), key=lambda x: x[0].timesubmitted)
-        sorted_grades = [g for _, g in sorted_pairs]
-        mid            = len(sorted_grades) // 2
-        first_avg      = sum(sorted_grades[:mid]) / mid
-        second_avg     = sum(sorted_grades[mid:]) / len(sorted_grades[mid:])
-        diff           = second_avg - first_avg
-        if diff > 5.0:
-            trend = "improving"
-        elif diff < -5.0:
-            trend = "declining"
-        else:
-            trend = "stable"
-
-    log.info("portfolio/aggregate: exams=%d avg=%.1f%% trend=%s", len(req.exams), avg, trend)
-
-    return PortfolioAggregateResponse(
-        total_exams=len(req.exams),
-        avg_grade=round(avg, 2),
-        best_grade=round(best, 2),
-        worst_grade=round(worst, 2),
-        trend=trend,
-    )
+# /eval/portfolio/aggregate was removed 2026-09-16: dead code, confirmed by
+# an exhaustive grep of local_evalia for engine_request('/portfolio/... --
+# no PHP caller ever existed. Portfolio stats (avg_grade, total_exams) are
+# computed directly in PHP (grade_exam.php, publish_grade.php), which is
+# also where get_student_portfolio.php reads them from -- this endpoint
+# had zero live coverage and nothing depended on it.
 
 
 # ─── /eval/feedback/send ─────────────────────────────────────────────────────
