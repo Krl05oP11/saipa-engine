@@ -88,23 +88,53 @@ if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
         )
         sys.exit(1)
 
+# === Telegram webhook secret check at startup ===
+# An empty telegram_webhook_secret with the bot enabled makes /telegram/webhook
+# accept updates from anyone who finds the URL, not just Telegram's servers --
+# same fail-closed pattern as SAIPA_API_TOKEN above.
+if settings.telegram_bot_token and not settings.telegram_webhook_secret:
+    if settings.saipa_dev_mode:
+        log.warning(
+            "SAIPA_DEV_MODE is on and TELEGRAM_WEBHOOK_SECRET is not set — "
+            "/telegram/webhook will accept unverified requests."
+        )
+    else:
+        log.critical(
+            "TELEGRAM_BOT_TOKEN is set but TELEGRAM_WEBHOOK_SECRET is not. "
+            "Set it (e.g. `openssl rand -hex 32`, then register the same value "
+            "as secret_token in setWebhook), or set SAIPA_DEV_MODE=true for "
+            "local development only."
+        )
+        sys.exit(1)
+
 # === FastAPI app ===
+# /docs, /redoc and the raw /openapi.json enumerate every route for anyone
+# who can reach this port -- fine in dev, an unnecessary map handed to a
+# scanner in production. Off unless SAIPA_DEV_MODE is explicitly enabled.
 app = FastAPI(
     title="SAIPA Engine",
     description="AI backend for the SAIPA Moodle plugin system",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.saipa_dev_mode else None,
+    redoc_url="/redoc" if settings.saipa_dev_mode else None,
+    openapi_url="/openapi.json" if settings.saipa_dev_mode else None,
 )
+
+# "*" (any origin) is a dev-only convenience -- production must list the
+# real caller origins explicitly. This mainly matters if the engine is ever
+# reachable from browser JS; the current nginx.conf.example blocks it from
+# the internet entirely, but CORS should not depend on that holding true.
+_cors_origins = [
+    "http://localhost:8080",
+    "http://host.docker.internal:8080",
+    "http://saipa-moodle:8080",
+]
+if settings.saipa_dev_mode:
+    _cors_origins.append("*")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8080",
-        "http://host.docker.internal:8080",
-        "http://saipa-moodle:8080",
-        "*",  # Tighten this in production
-    ],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
