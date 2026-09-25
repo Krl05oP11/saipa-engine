@@ -23,6 +23,8 @@ class LicenseSettings(BaseSettings):
     saipa_license_key: str = ""
     saipa_license_validation_url: str = "https://api.schaller-ponce.com.ar/license/validate"
     saipa_offline_grace_days: int = 30
+    saipa_dev_mode: bool = False
+    saipa_license_request_url: str = "https://api.schaller-ponce.com.ar/license/request"
 
     class Config:
         env_file = ".env"
@@ -53,8 +55,16 @@ def validate_license() -> bool:
     cfg = LicenseSettings()
 
     if not cfg.saipa_license_key:
-        log.warning("SAIPA_LICENSE_KEY not set — running in development mode (no validation).")
-        return True
+        # Bloque F: an empty key used to silently skip validation, so anyone could
+        # bypass licensing by leaving it blank. Now only SAIPA_DEV_MODE allows that,
+        # same explicit switch as the SAIPA_API_TOKEN check in main.py.
+        if cfg.saipa_dev_mode:
+            log.warning("SAIPA_LICENSE_KEY not set — SAIPA_DEV_MODE is on, skipping license validation.")
+            return True
+        raise RuntimeError(
+            "SAIPA_LICENSE_KEY is not set. Moodle Marketplace buyers can request one at "
+            f"{cfg.saipa_license_request_url} (set SAIPA_DEV_MODE=true for local development only)."
+        )
 
     cache = _load_cache()
     now = time.time()
