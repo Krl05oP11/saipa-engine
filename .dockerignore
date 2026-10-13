@@ -1,0 +1,15 @@
+# Never bake local secrets, environments or data into the image.
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+chroma_data/
+.license_cache
+.git/
+.github/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+tests/
