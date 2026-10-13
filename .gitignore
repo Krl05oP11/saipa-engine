@@ -1,5 +1,4 @@
 .env
-.license_cache
 venv/
 chroma_data/
 __pycache__/

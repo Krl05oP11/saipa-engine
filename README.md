@@ -8,7 +8,7 @@ generation and grading, and the Telegram channel.
 - **Consumed by:** [`local_saipa`](https://github.com/Krl05oP11/moodle-local_saipa),
   [`block_saipa`](https://github.com/Krl05oP11/moodle-block_saipa),
   [`local_evalia`](https://github.com/Krl05oP11/moodle-local_evalia)
-- **License:** proprietary (Schaller & Ponce). Not for redistribution.
+- **License:** [GNU AGPL v3.0 or later](LICENSE). Free to self-host; no license key required.
 
 ## Endpoints (routers mounted in `main.py`)
 
@@ -44,7 +44,6 @@ Key ones:
 
 - `SAIPA_API_TOKEN` — **required**. Bearer token Moodle must send. The engine
   refuses to start with an empty token unless `SAIPA_DEV_MODE=true` (local dev only).
-- `SAIPA_LICENSE_KEY` — license validation at startup (30-day offline grace).
 - `MOODLE_URL` / `MOODLE_TOKEN` — Moodle web-services endpoint.
 - `LLM_PROVIDER` — **required**, `ollama`, `anthropic` or `openai_compatible`
   (this is the university admin's decision — who to contract and pay for the
@@ -100,3 +99,14 @@ Key ones:
 pip install pytest
 pytest
 ```
+
+## License
+
+Copyright (C) 2026 Schaller & Ponce.
+
+saipa-engine is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. If you run a modified version as a network service, the AGPL
+requires you to offer its source code to that service's users. See
+[LICENSE](LICENSE).

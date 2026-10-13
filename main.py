@@ -17,7 +17,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from license_validator import validate_license
 from llm.factory import _STRUCTURED_OUTPUT_METHOD
 from routers.health import router as health_router
 from routers.chat import router as chat_router
@@ -34,13 +33,6 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 log = logging.getLogger("saipa_engine")
-
-# === License check at startup ===
-try:
-    validate_license()
-except RuntimeError as e:
-    log.critical("LICENSE VALIDATION FAILED: %s", e)
-    sys.exit(1)
 
 # === API auth check at startup ===
 # An empty SAIPA_API_TOKEN makes the engine accept unauthenticated requests.
